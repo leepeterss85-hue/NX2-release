@@ -7,5 +7,7 @@
   "hardware_tested": true,
   "installer_tested": false,
   "rollback_tested": false,
-  "approval": "User confirmed tested and authorized release; build previously passed; do not claim updater installer or rollback have been tested."
+  "approval": "User confirmed tested and authorized release; build previously passed; do not claim updater installer or rollback have been tested.",
+  "attempt": 2,
+  "note": "Use job-time refreshed signed download pointer, preserve exact checked digests and source"
 }
