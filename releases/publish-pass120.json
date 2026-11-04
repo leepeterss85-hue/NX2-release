@@ -1,0 +1,11 @@
+{
+  "release_tag": "pass120",
+  "source_run_id": 41801710902,
+  "source_sha": "0c12be0e16fa91644f67d6bf88ba0493f44a0293",
+  "candidate_run_id": 41824704059,
+  "expected_sha256": "b17f72a274deed96ecb254dab5b7e9912110a89c8bb497e72a25e537f00b0002",
+  "hardware_tested": true,
+  "installer_tested": false,
+  "rollback_tested": false,
+  "approval": "User confirmed tested and authorized release; build previously passed; do not claim updater installer or rollback have been tested."
+}
