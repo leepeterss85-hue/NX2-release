@@ -34,7 +34,7 @@ jobs:
               if item.get('browser_download_url')!=url:
                   raise SystemExit('Unexpected release asset URL')
           checksum=get(assets[name+'.sha256']['browser_download_url']).decode('ascii').strip()
-          digest=re.fullmatch(r'([a-fA-F0-9]{64})\\s+\\*?'+re.escape(name),checksum)
+          digest=re.fullmatch(r'([a-fA-F0-9]{64})\s+\*?'+re.escape(name),checksum)
           if not digest: raise SystemExit('Invalid sidecar checksum')
           data=get(assets[name]['browser_download_url'])
           if hashlib.sha256(data).hexdigest()!=digest.group(1).lower():
@@ -43,7 +43,7 @@ jobs:
               roots=set(); paths={}; size=0
               for entry in z.infolist():
                   p=entry.filename
-                  if not p or p.startswith('/') or '\\\\' in p or ':' in p or any(s in ('','.','..') for s in p.rstrip('/').split('/')):
+                  if not p or p.startswith('/') or '\\' in p or ':' in p or any(s in ('','.','..') for s in p.rstrip('/').split('/')):
                       raise SystemExit('Unsafe ZIP path')
                   parts=p.rstrip('/').split('/')
                   if len(parts)<2 and not entry.is_dir(): raise SystemExit('Unexpected archive root')
