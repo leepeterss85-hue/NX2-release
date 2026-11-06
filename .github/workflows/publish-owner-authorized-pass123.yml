@@ -1,0 +1,124 @@
+name: Publish owner-authorized Pass123 with explicit untested disclosure
+on:
+  push:
+    branches: [main]
+    paths:
+      - "releases/pass123-owner-release-request.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nx2-public-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Load approved release request
+        uses: actions/checkout@v4
+      - name: Verify owner-approved Pass123 manifest and no rollback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "leepeterss85-hue/NX2-release"
+          python3 - <<'PY'
+          import json,re,os
+          x=json.load(open('releases/pass123-owner-release-request.json'))
+          assert re.fullmatch(r'pass[1-9][0-9]*',x['release_tag'])
+          assert re.fullmatch(r'[0-9a-f]{40}',x['source_sha'])
+          assert isinstance(x['source_run_id'],int) and x['source_run_id']>0
+          assert isinstance(x['candidate_run_id'],int) and x['candidate_run_id']>0
+          assert re.fullmatch(r'[0-9a-f]{64}',x['candidate_artifact_sha256'])
+          assert re.fullmatch(r'[0-9a-f]{64}',x['runtime_zip_sha256'])
+          # Owner authorized this release, but hardware testing of the exact ZIP is not claimed.
+          assert x.get('release_tag') == 'pass123'
+          assert x.get('hardware_tested') is False
+          assert x.get('owner_authorized_untested') is True
+          assert x.get('publish_confirmation')=='PUBLISH_UNTESTED'
+          assert x.get('public_release_repo')=='leepeterss85-hue/NX2-release'
+          with open(os.environ['GITHUB_ENV'],'a') as g:
+            g.write('NX2_TAG='+x['release_tag']+'\n')
+          print('Owner-approved untested candidate for '+x['release_tag'])
+          PY
+          export NX2_TAG="$(python3 -c 'import json;print(json.load(open("releases/pass123-owner-release-request.json"))["release_tag"])')"
+          if gh release view "$NX2_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A release already exists under this tag"; exit 1
+          fi
+          python3 - <<'PY'
+          import json,os,re,subprocess
+          target=int(os.environ['NX2_TAG'][4:])
+          releases=json.loads(subprocess.check_output(['gh','release','list','--repo',os.environ['GITHUB_REPOSITORY'],'--json','tagName','--limit','100'],text=True))
+          for item in releases:
+            match=re.fullmatch(r'pass([1-9][0-9]*)',item['tagName'])
+            if match and int(match.group(1))>=target:
+              raise SystemExit('Refusing to publish a downgrade or duplicate release')
+          PY
+      - name: Fetch the approved candidate using a refreshable one-time URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          POINTER="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/releases/next-release-link.txt"
+          CANDIDATE_URL="$(curl -fLsS --retry 3 "$POINTER")"
+          case "$CANDIDATE_URL" in https://sdmntpr*.oaiusercontent.com/files/*) ;; *) echo "::error::Unexpected candidate link"; exit 1 ;; esac
+          curl -fLsS --retry 3 --connect-timeout 30 --max-time 900 "$CANDIDATE_URL" -o candidate-artifact.zip
+          python3 - <<'PY'
+          import hashlib,json
+          spec=json.load(open('releases/pass123-owner-release-request.json'))
+          with open('candidate-artifact.zip','rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+          assert digest==spec['candidate_artifact_sha256'],'Candidate artifact checksum mismatch'
+          PY
+          mkdir candidate
+          unzip -qq candidate-artifact.zip -d candidate
+      - name: Verify source metadata, Windows runtime ZIP, checksum and channel
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib,re,zipfile
+          spec=json.load(open('releases/pass123-owner-release-request.json'))
+          d=pathlib.Path('candidate')
+          for name in ('eden-nx2-windows-x64.zip','eden-nx2-windows-x64.zip.sha256','nx2-candidate-manifest.json','RELEASE_NOTES.md'):
+            if not (d/name).is_file(): raise SystemExit('Candidate missing '+name)
+          m=json.loads((d/'nx2-candidate-manifest.json').read_text())
+          assert m['version']==spec['release_tag']
+          assert m['source_run_id']==spec['source_run_id']
+          assert m['source_commit']==spec['source_sha']
+          assert m['public_release_repo']==spec['public_release_repo']
+          z=d/'eden-nx2-windows-x64.zip'
+          with z.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+          assert digest==spec['runtime_zip_sha256']==m['archive_sha256']
+          assert (d/'eden-nx2-windows-x64.zip.sha256').read_text().strip()==digest+' *eden-nx2-windows-x64.zip'
+          with zipfile.ZipFile(z) as archive:
+            if archive.testzip(): raise SystemExit('Corrupt runtime ZIP')
+            names=archive.namelist()
+            if any(n.startswith('/') or '\\' in n or '..' in pathlib.PurePosixPath(n).parts for n in names):
+              raise SystemExit('Unsafe ZIP entry')
+            roots={n.split('/')[0] for n in names if n}
+            if len(roots)!=1: raise SystemExit('Invalid ZIP root')
+            root=next(iter(roots))+'/'
+            for name in ('eden.exe','nx2-apply-update.ps1','nx2-update-channel.json','READ_ME_FIRST.txt'):
+              if root+name not in names: raise SystemExit('Missing runtime '+name)
+            channel=json.loads(archive.read(root+'nx2-update-channel.json'))
+            assert channel['github_repo']==spec['public_release_repo']
+            if any(n.startswith(root+'user/') for n in names):
+              raise SystemExit('Personal user files included')
+          print('Validated approved candidate, provenance, checksum and updater channel')
+          PY
+      - name: Publish owner-approved Pass123 with testing disclosure
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '\n\n**Testing disclosure:** The release owner authorized publication of this Windows candidate before hands-on gameplay testing of this exact ZIP. Automated source audits, MSVC compilation, package checks and updater-channel validation passed; game compatibility and physical-device testing remain unverified.\n' >> candidate/RELEASE_NOTES.md
+          gh release create "$NX2_TAG" \
+            candidate/eden-nx2-windows-x64.zip \
+            candidate/eden-nx2-windows-x64.zip.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Eden NX2 $NX2_TAG" \
+            --notes-file candidate/RELEASE_NOTES.md \
+            --latest
